@@ -14,6 +14,8 @@ pub enum SignError {
     TooManyKeys,
     #[error("empty payload")]
     EmptyPayload,
+    #[error("signing keys slice is empty")]
+    NoSigningKeys,
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -35,6 +37,9 @@ pub fn sign(
 ) -> Result<String, SignError> {
     if signing_keys.len() > 255 {
         return Err(SignError::TooManyKeys);
+    }
+    if signing_keys.is_empty() {
+        return Err(SignError::NoSigningKeys);
     }
     let key_index = fastrand::usize(0..signing_keys.len());
 
@@ -90,14 +95,16 @@ mod tests {
     use super::*;
 
     const PAYLOAD: &[u8] = b"1234567890";
-    const KEYS: [&'static [u8]; 3] = [b"signing key one", b"signing key two", b"signing key three"];
+    const KEYS: &[&'static [u8]; 3] =
+        &[b"signing key one", b"signing key two", b"signing key three"];
+    const EMPTY_KEYS: &[&'static [u8]; 0] = &[];
 
     #[test]
     fn round_trip() {
-        let token = sign(PAYLOAD, &KEYS).unwrap();
+        let token = sign(PAYLOAD, KEYS).unwrap();
         assert!(token.len() > 0);
 
-        let validated_payload = verify(&token, &KEYS).unwrap();
+        let validated_payload = verify(&token, KEYS).unwrap();
         assert_eq!(validated_payload, PAYLOAD);
     }
 
@@ -126,14 +133,14 @@ mod tests {
 
     #[test]
     fn tampering_with_payload_fails_verification() {
-        let token = sign(PAYLOAD, &KEYS).unwrap();
+        let token = sign(PAYLOAD, KEYS).unwrap();
         let mut decoded = URL_SAFE_NO_PAD.decode(&token).unwrap();
         let decoded_len = decoded.len();
         decoded[decoded_len - 1] ^= 1;
 
         let tampered = URL_SAFE_NO_PAD.encode(&decoded);
         assert_eq!(
-            verify(&tampered, &KEYS).unwrap_err(),
+            verify(&tampered, KEYS).unwrap_err(),
             VerifyError::Signature(MacError)
         );
     }
@@ -141,19 +148,41 @@ mod tests {
     #[test]
     fn invalid_encoding_fails_verification() {
         assert!(matches!(
-            verify("*&<>", &KEYS).unwrap_err(),
+            verify("*&<>", KEYS).unwrap_err(),
             VerifyError::Decoding(_)
         ));
     }
 
     #[test]
     fn too_short_fails_verification() {
-        assert_eq!(verify("abcd", &KEYS).unwrap_err(), VerifyError::TooShort);
+        assert_eq!(verify("abcd", KEYS).unwrap_err(), VerifyError::TooShort);
     }
 
     #[test]
-    fn no_matching_key() {
-        let token = sign(PAYLOAD, &KEYS).unwrap();
-        assert_eq!(verify(&token, &["";0]).unwrap_err(), VerifyError::NoMatchingKey);
+    fn no_matching_key_fails_verification() {
+        let token = sign(PAYLOAD, KEYS).unwrap();
+        assert_eq!(
+            verify(&token, EMPTY_KEYS).unwrap_err(),
+            VerifyError::NoMatchingKey
+        );
+    }
+
+    #[test]
+    fn no_keys_fails_signing() {
+        assert_eq!(
+            sign(PAYLOAD, EMPTY_KEYS).unwrap_err(),
+            SignError::NoSigningKeys
+        );
+    }
+
+    #[test]
+    fn too_many_keys_fails_signing() {
+        let keys = vec![b"signing key"; 256];
+        assert_eq!(sign(PAYLOAD, &keys).unwrap_err(), SignError::TooManyKeys);
+    }
+
+    #[test]
+    fn empty_payload_fails_signing() {
+        assert_eq!(sign(b"", KEYS).unwrap_err(), SignError::EmptyPayload);
     }
 }
