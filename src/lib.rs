@@ -44,7 +44,7 @@ pub enum SigningKeyStatus {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SigningKey {
     key: Vec<u8>,
-    status: SigningKeyStatus,
+    pub status: SigningKeyStatus,
 }
 
 impl SigningKey {
@@ -61,6 +61,10 @@ impl SigningKey {
 
     pub fn new_do_not_use() -> Self {
         Self::new_with_status(&[], SigningKeyStatus::DoNotUse)
+    }
+
+    pub fn key(&self) -> &[u8] {
+        &self.key
     }
 }
 

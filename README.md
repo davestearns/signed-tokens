@@ -30,17 +30,21 @@ use uuid::Uuid;
 let session_id = Uuid::new_v4().to_string();
 ```
 
-To digitally sign the session ID, you'll also need some secret keys. Your server is the only one that needs to know about these keys, but they should remain the same after a server restart so that existing sessions will still be valid. You can read them from environment variables, or a file, or a secrets service. But they should remain secret to your server and never be added directly to your source code.
+To digitally sign the session ID, you'll also need some secret keys. Your server is the only one that needs to know about these keys, but they should remain the same after a server restart so that existing sessions will still be valid. You can read them from environment variables, or a file, or a secrets manager service, or whatever. But they should remain secret to your server and never be added directly to your source code.
 
 ```rust
+use session_tokens::SigningKey;
+
 let signing_keys = vec![
-    env::var("SESSION_SIGNING_KEY_1").unwrap(),
-    env::var("SESSION_SIGNING_KEY_2").unwrap(),
-    env::var("SESSION_SIGNING_KEY_3").unwrap(),
+    SigningKey::new(env::var("SESSION_SIGNING_KEY_1").unwrap()),
+    SigningKey::new(env::var("SESSION_SIGNING_KEY_2").unwrap()),
+    SigningKey::new(env::var("SESSION_SIGNING_KEY_3").unwrap()),
 ]
 ```
 
-You can have up to 255 signing keys. When you sign, this crate will choose one of them randomly, and add the array index to the generated token so it knows which one it used. When you verify a token, pass the same array of keys so that this crate uses the correct key to verify the signature.
+You can have up to 255 signing keys. Each key can be used for signing and verifying, verifying only, or marked as "do not use" (i.e., for placeholders).
+
+When you sign, this crate will randomly choose one of the sign-and-verify keys, and add the array index to the generated token so it knows which one it used. When you verify a token, pass the same array of keys so that this crate uses the correct key to verify the signature.
 
 To sign your session ID, pass it and your array of signing keys to the `sign()` function:
 
