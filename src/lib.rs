@@ -60,7 +60,7 @@ impl SigningKey {
     }
 
     pub fn new_do_not_use() -> Self {
-        Self::new_with_status(&[], SigningKeyStatus::DoNotUse)
+        Self::new_with_status([], SigningKeyStatus::DoNotUse)
     }
 
     pub fn key(&self) -> &[u8] {
@@ -93,7 +93,7 @@ pub fn sign(payload: impl AsRef<[u8]>, signing_keys: &[SigningKey]) -> Result<St
         return Err(SignError::EmptyPayload);
     }
     let mut mac =
-        HmacSha256::new_from_slice(&key_bytes).expect("Hmac should support any key length");
+        HmacSha256::new_from_slice(key_bytes).expect("Hmac should support any key length");
     mac.update(payload_bytes);
     let signature = mac.finalize().into_bytes();
 
