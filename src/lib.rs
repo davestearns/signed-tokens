@@ -30,29 +30,66 @@ pub enum VerifyError {
     TooShort,
     #[error("the key index saved in the token does not match an entry in the signing keys array")]
     NoMatchingKey,
+    #[error("signing key is marked as do-not-use")]
+    DoNotUseKey,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SigningKeyStatus {
+    SignAndVerify,
+    VerifyOnly,
+    DoNotUse,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SigningKey {
+    key: Vec<u8>,
+    status: SigningKeyStatus,
+}
+
+impl SigningKey {
+    pub fn new(key: impl AsRef<[u8]>) -> Self {
+        Self::new_with_status(key, SigningKeyStatus::SignAndVerify)
+    }
+
+    pub fn new_with_status(key: impl AsRef<[u8]>, status: SigningKeyStatus) -> Self {
+        Self {
+            key: key.as_ref().to_vec(),
+            status,
+        }
+    }
+
+    pub fn new_do_not_use() -> Self {
+        Self::new_with_status(&[], SigningKeyStatus::DoNotUse)
+    }
 }
 
 /// Signs the given payload using a randomly selected key from the signing_keys.
 /// The returned String is base64 encoded using a URL-safe alphabet, so you can
 /// include it in your HTTP response as a secure HttpOnly cookie.
-pub fn sign(
-    payload: impl AsRef<[u8]>,
-    signing_keys: &[impl AsRef<[u8]>],
-) -> Result<String, SignError> {
+pub fn sign(payload: impl AsRef<[u8]>, signing_keys: &[SigningKey]) -> Result<String, SignError> {
     if signing_keys.len() > 255 {
         return Err(SignError::TooManyKeys);
     }
-    if signing_keys.is_empty() {
+
+    let active_key_indexes: Vec<usize> = signing_keys
+        .iter()
+        .filter(|sk| sk.status == SigningKeyStatus::SignAndVerify)
+        .enumerate()
+        .map(|(idx, _sk)| idx)
+        .collect();
+
+    if active_key_indexes.is_empty() {
         return Err(SignError::NoSigningKeys);
     }
-    let key_index = fastrand::usize(0..signing_keys.len());
-
+    let key_index = fastrand::usize(0..active_key_indexes.len());
+    let key_bytes = &signing_keys[key_index].key;
     let payload_bytes = payload.as_ref();
     if payload_bytes.is_empty() {
         return Err(SignError::EmptyPayload);
     }
-    let mut mac = HmacSha256::new_from_slice(signing_keys[key_index].as_ref())
-        .expect("Hmac should support any key length");
+    let mut mac =
+        HmacSha256::new_from_slice(&key_bytes).expect("Hmac should support any key length");
     mac.update(payload_bytes);
     let signature = mac.finalize().into_bytes();
 
@@ -69,7 +106,7 @@ pub fn sign(
 /// Verifies a previously signed token. The key used to sign the token must still
 /// be in the signing_keys array at the same index. If the token has been tampered with,
 /// the Result will contain a [VerifyError::Signature] error.
-pub fn verify(token: &str, signing_keys: &[impl AsRef<[u8]>]) -> Result<Vec<u8>, VerifyError> {
+pub fn verify(token: &str, signing_keys: &[SigningKey]) -> Result<Vec<u8>, VerifyError> {
     let decoded = URL_SAFE_NO_PAD.decode(token)?;
     let sig_byte_len = HmacSha256::output_size();
 
@@ -86,9 +123,13 @@ pub fn verify(token: &str, signing_keys: &[impl AsRef<[u8]>]) -> Result<Vec<u8>,
     if key_index as usize >= signing_keys.len() {
         return Err(VerifyError::NoMatchingKey);
     }
-    let key = signing_keys[key_index as usize].as_ref();
+    let signing_key = &signing_keys[key_index as usize];
+    if signing_key.status == SigningKeyStatus::DoNotUse {
+        return Err(VerifyError::DoNotUseKey);
+    }
 
-    let mut mac = HmacSha256::new_from_slice(key).expect("any key length should be supported");
+    let mut mac =
+        HmacSha256::new_from_slice(&signing_key.key).expect("any key length should be supported");
     mac.update(payload);
     mac.verify_slice(signature)?;
 
@@ -100,35 +141,30 @@ mod tests {
     use super::*;
 
     const PAYLOAD: &[u8] = b"1234567890";
-    const KEYS: &[&'static [u8]; 3] =
-        &[b"signing key one", b"signing key two", b"signing key three"];
-    const EMPTY_KEYS: &[&'static [u8]; 0] = &[];
 
-    #[test]
-    fn round_trip() {
-        let token = sign(PAYLOAD, KEYS).unwrap();
-        assert!(token.len() > 0);
-
-        let validated_payload = verify(&token, KEYS).unwrap();
-        assert_eq!(validated_payload, PAYLOAD);
+    fn keys() -> Vec<SigningKey> {
+        vec![
+            SigningKey::new(b"test key one"),
+            SigningKey::new(b"test key two"),
+            SigningKey::new(b"test key three"),
+        ]
     }
 
     #[test]
-    fn keys_as_vector_of_strings() {
-        let keys = vec![
-            "one signing key".to_string(),
-            "another signing key".to_string(),
-        ];
+    fn round_trip() {
+        let keys = keys();
         let token = sign(PAYLOAD, &keys).unwrap();
+        assert!(token.len() > 0);
+
         let validated_payload = verify(&token, &keys).unwrap();
         assert_eq!(validated_payload, PAYLOAD);
     }
 
     #[test]
     fn key_change_fails_verification() {
-        let mut keys = vec!["my secret signing key".to_string()];
+        let mut keys = vec![SigningKey::new("test key")];
         let token = sign(PAYLOAD, &keys).unwrap();
-        keys[0] = "some other signing key".to_string();
+        keys[0] = SigningKey::new("some other key value");
 
         assert_eq!(
             verify(&token, &keys).unwrap_err(),
@@ -138,14 +174,15 @@ mod tests {
 
     #[test]
     fn tampering_with_payload_fails_verification() {
-        let token = sign(PAYLOAD, KEYS).unwrap();
+        let keys = keys();
+        let token = sign(PAYLOAD, &keys).unwrap();
         let mut decoded = URL_SAFE_NO_PAD.decode(&token).unwrap();
         let decoded_len = decoded.len();
         decoded[decoded_len - 1] ^= 1;
 
         let tampered = URL_SAFE_NO_PAD.encode(&decoded);
         assert_eq!(
-            verify(&tampered, KEYS).unwrap_err(),
+            verify(&tampered, &keys).unwrap_err(),
             VerifyError::Signature(MacError)
         );
     }
@@ -153,41 +190,63 @@ mod tests {
     #[test]
     fn invalid_encoding_fails_verification() {
         assert!(matches!(
-            verify("*&<>", KEYS).unwrap_err(),
+            verify("*&<>", &keys()).unwrap_err(),
             VerifyError::Decoding(_)
         ));
     }
 
     #[test]
     fn too_short_fails_verification() {
-        assert_eq!(verify("abcd", KEYS).unwrap_err(), VerifyError::TooShort);
+        assert_eq!(verify("abcd", &keys()).unwrap_err(), VerifyError::TooShort);
     }
 
     #[test]
     fn no_matching_key_fails_verification() {
-        let token = sign(PAYLOAD, KEYS).unwrap();
-        assert_eq!(
-            verify(&token, EMPTY_KEYS).unwrap_err(),
-            VerifyError::NoMatchingKey
-        );
+        let token = sign(PAYLOAD, &keys()).unwrap();
+        assert_eq!(verify(&token, &[]).unwrap_err(), VerifyError::NoMatchingKey);
     }
 
     #[test]
     fn no_keys_fails_signing() {
-        assert_eq!(
-            sign(PAYLOAD, EMPTY_KEYS).unwrap_err(),
-            SignError::NoSigningKeys
-        );
+        assert_eq!(sign(PAYLOAD, &[]).unwrap_err(), SignError::NoSigningKeys);
     }
 
     #[test]
     fn too_many_keys_fails_signing() {
-        let keys = vec![b"signing key"; 256];
+        let keys = vec![SigningKey::new(b"1234"); 256];
         assert_eq!(sign(PAYLOAD, &keys).unwrap_err(), SignError::TooManyKeys);
     }
 
     #[test]
     fn empty_payload_fails_signing() {
-        assert_eq!(sign(b"", KEYS).unwrap_err(), SignError::EmptyPayload);
+        assert_eq!(sign(b"", &keys()).unwrap_err(), SignError::EmptyPayload);
+    }
+
+    #[test]
+    fn sign_only_uses_active_keys() {
+        let keys = vec![
+            SigningKey::new("active key"),
+            SigningKey::new_with_status("deprecated key", SigningKeyStatus::VerifyOnly),
+            SigningKey::new_do_not_use(),
+        ];
+        let token = sign(PAYLOAD, &keys).unwrap();
+        let payload = verify(&token, &keys[0..1]).unwrap();
+        assert_eq!(&payload, &PAYLOAD);
+    }
+
+    #[test]
+    fn verify_works_with_deprecated_key() {
+        let mut keys = vec![SigningKey::new("test key")];
+        let token = sign(PAYLOAD, &keys).unwrap();
+        keys[0].status = SigningKeyStatus::VerifyOnly;
+        assert!(verify(&token, &keys).is_ok());
+    }
+
+    #[test]
+    fn verify_fails_with_do_not_use_key() {
+        let mut keys = vec![SigningKey::new("test key")];
+        let token = sign(PAYLOAD, &keys).unwrap();
+        keys[0].status = SigningKeyStatus::DoNotUse;
+        assert_eq!(verify(&token, &keys).unwrap_err(), VerifyError::DoNotUseKey);
     }
 }
