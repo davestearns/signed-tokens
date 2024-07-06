@@ -24,6 +24,8 @@ pub enum VerifyError {
     Signature(#[from] MacError),
     #[error("the provided token is too short")]
     TooShort,
+    #[error("the key index saved in the token does not match an entry in the signing keys array")]
+    NoMatchingKey,
 }
 
 /// Signs the given payload using a randomly selected key from the signing_keys.
@@ -61,8 +63,8 @@ pub fn verify(token: &str, signing_keys: &[impl AsRef<[u8]>]) -> Result<Vec<u8>,
     let decoded = URL_SAFE_NO_PAD.decode(token)?;
     let sig_byte_len = HmacSha256::output_size();
 
-    // Token must be at least the signature length plus two bytes
-    // (key index and a payload of at least one byte)
+    // Token must be at least the signature length plus a byte
+    // for the key index, plus at least one byte of payload
     if decoded.len() < sig_byte_len + 2 {
         return Err(VerifyError::TooShort);
     }
@@ -71,7 +73,11 @@ pub fn verify(token: &str, signing_keys: &[impl AsRef<[u8]>]) -> Result<Vec<u8>,
     let signature = &decoded[1..sig_byte_len + 1];
     let payload = &decoded[sig_byte_len + 1..];
 
+    if key_index as usize >= signing_keys.len() {
+        return Err(VerifyError::NoMatchingKey);
+    }
     let key = signing_keys[key_index as usize].as_ref();
+
     let mut mac = HmacSha256::new_from_slice(key).expect("any key length should be supported");
     mac.update(payload);
     mac.verify_slice(signature)?;
@@ -122,8 +128,8 @@ mod tests {
     fn tampering_with_payload_fails_verification() {
         let token = sign(PAYLOAD, &KEYS).unwrap();
         let mut decoded = URL_SAFE_NO_PAD.decode(&token).unwrap();
-        let len_decoded = decoded.len();
-        decoded[len_decoded - 1] += 1;
+        let decoded_len = decoded.len();
+        decoded[decoded_len - 1] ^= 1;
 
         let tampered = URL_SAFE_NO_PAD.encode(&decoded);
         assert_eq!(
@@ -143,5 +149,11 @@ mod tests {
     #[test]
     fn too_short_fails_verification() {
         assert_eq!(verify("abcd", &KEYS).unwrap_err(), VerifyError::TooShort);
+    }
+
+    #[test]
+    fn no_matching_key() {
+        let token = sign(PAYLOAD, &KEYS).unwrap();
+        assert_eq!(verify(&token, &["";0]).unwrap_err(), VerifyError::NoMatchingKey);
     }
 }
