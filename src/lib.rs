@@ -8,6 +8,7 @@ use thiserror::Error;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Potential errors returned from the [sign] function.
 #[derive(Debug, Error, PartialEq, Clone)]
 pub enum SignError {
     #[error("this supports up to 255 signing keys")]
@@ -18,6 +19,7 @@ pub enum SignError {
     NoSigningKeys,
 }
 
+/// Potential errors returned from the [verify] function.
 #[derive(Debug, Error, PartialEq, Clone)]
 pub enum VerifyError {
     #[error("error decoding token: {0}")]
@@ -31,6 +33,8 @@ pub enum VerifyError {
 }
 
 /// Signs the given payload using a randomly selected key from the signing_keys.
+/// The returned String is base64 encoded using a URL-safe alphabet, so you can
+/// include it in your HTTP response as a secure HttpOnly cookie.
 pub fn sign(
     payload: impl AsRef<[u8]>,
     signing_keys: &[impl AsRef<[u8]>],
@@ -62,8 +66,9 @@ pub fn sign(
     Ok(URL_SAFE_NO_PAD.encode(token_bytes))
 }
 
-/// Verifies a previously signed token. The key used to sign the toke must still
-/// be in the signing_keys array at the same index.
+/// Verifies a previously signed token. The key used to sign the token must still
+/// be in the signing_keys array at the same index. If the token has been tampered with,
+/// the Result will contain a [VerifyError::Signature] error.
 pub fn verify(token: &str, signing_keys: &[impl AsRef<[u8]>]) -> Result<Vec<u8>, VerifyError> {
     let decoded = URL_SAFE_NO_PAD.decode(token)?;
     let sig_byte_len = HmacSha256::output_size();
