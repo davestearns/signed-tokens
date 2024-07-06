@@ -9,7 +9,15 @@ use thiserror::Error;
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Error, PartialEq, Clone)]
-pub enum TokenVerificationError {
+pub enum SignError {
+    #[error("this supports up to 255 signing keys")]
+    TooManyKeys,
+    #[error("empty payload")]
+    EmptyPayload,
+}
+
+#[derive(Debug, Error, PartialEq, Clone)]
+pub enum VerifyError {
     #[error("error decoding token: {0}")]
     Decoding(#[from] DecodeError),
     #[error("error verifying signature: {0}")]
@@ -18,41 +26,45 @@ pub enum TokenVerificationError {
     TooShort,
 }
 
-pub fn sign(payload: impl AsRef<[u8]>, signing_keys: &[impl AsRef<[u8]>]) -> String {
-    assert!(
-        signing_keys.len() <= 255,
-        "Signing keys vector must be 255 entries or less"
-    );
+/// Signs the given payload using a randomly selected key from the signing_keys.
+pub fn sign(
+    payload: impl AsRef<[u8]>,
+    signing_keys: &[impl AsRef<[u8]>],
+) -> Result<String, SignError> {
+    if signing_keys.len() > 255 {
+        return Err(SignError::TooManyKeys);
+    }
     let key_index = fastrand::usize(0..signing_keys.len());
-    let mut mac = HmacSha256::new_from_slice(signing_keys[key_index].as_ref())
-        .expect("Hmac should support any key length");
 
     let payload_bytes = payload.as_ref();
-    assert!(payload_bytes.len() > 0);
-
+    if payload_bytes.is_empty() {
+        return Err(SignError::EmptyPayload);
+    }
+    let mut mac = HmacSha256::new_from_slice(signing_keys[key_index].as_ref())
+        .expect("Hmac should support any key length");
     mac.update(payload_bytes);
     let signature = mac.finalize().into_bytes();
 
-    let mut token_bytes: Vec<u8> = Vec::with_capacity(1 + signature.len() + payload_bytes.len());
+    let mut token_bytes: Vec<u8> =
+        Vec::with_capacity(1 + HmacSha256::output_size() + payload_bytes.len());
     // this cast is protected by the assert!() above
     token_bytes.push(key_index as u8);
     token_bytes.extend(&signature);
     token_bytes.extend(payload_bytes);
 
-    URL_SAFE_NO_PAD.encode(token_bytes)
+    Ok(URL_SAFE_NO_PAD.encode(token_bytes))
 }
 
-pub fn verify(
-    token: &str,
-    signing_keys: &[impl AsRef<[u8]>],
-) -> Result<Vec<u8>, TokenVerificationError> {
+/// Verifies a previously signed token. The key used to sign the toke must still
+/// be in the signing_keys array at the same index.
+pub fn verify(token: &str, signing_keys: &[impl AsRef<[u8]>]) -> Result<Vec<u8>, VerifyError> {
     let decoded = URL_SAFE_NO_PAD.decode(token)?;
-    let sig_byte_len = <HmacSha256 as OutputSizeUser>::output_size();
+    let sig_byte_len = HmacSha256::output_size();
 
     // Token must be at least the signature length plus two bytes
     // (key index and a payload of at least one byte)
     if decoded.len() < sig_byte_len + 2 {
-        return Err(TokenVerificationError::TooShort);
+        return Err(VerifyError::TooShort);
     }
 
     let key_index = decoded[0];
@@ -76,7 +88,7 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let token = sign(PAYLOAD, &KEYS);
+        let token = sign(PAYLOAD, &KEYS).unwrap();
         assert!(token.len() > 0);
 
         let validated_payload = verify(&token, &KEYS).unwrap();
@@ -89,7 +101,7 @@ mod tests {
             "one signing key".to_string(),
             "another signing key".to_string(),
         ];
-        let token = sign(PAYLOAD, &keys);
+        let token = sign(PAYLOAD, &keys).unwrap();
         let validated_payload = verify(&token, &keys).unwrap();
         assert_eq!(validated_payload, PAYLOAD);
     }
@@ -97,18 +109,18 @@ mod tests {
     #[test]
     fn key_change_fails_verification() {
         let mut keys = vec!["my secret signing key".to_string()];
-        let token = sign(PAYLOAD, &keys);
+        let token = sign(PAYLOAD, &keys).unwrap();
         keys[0] = "some other signing key".to_string();
 
         assert_eq!(
             verify(&token, &keys).unwrap_err(),
-            TokenVerificationError::Signature(MacError)
+            VerifyError::Signature(MacError)
         );
     }
 
     #[test]
     fn tampering_with_payload_fails_verification() {
-        let token = sign(PAYLOAD, &KEYS);
+        let token = sign(PAYLOAD, &KEYS).unwrap();
         let mut decoded = URL_SAFE_NO_PAD.decode(&token).unwrap();
         let len_decoded = decoded.len();
         decoded[len_decoded - 1] += 1;
@@ -116,7 +128,7 @@ mod tests {
         let tampered = URL_SAFE_NO_PAD.encode(&decoded);
         assert_eq!(
             verify(&tampered, &KEYS).unwrap_err(),
-            TokenVerificationError::Signature(MacError)
+            VerifyError::Signature(MacError)
         );
     }
 
@@ -124,15 +136,12 @@ mod tests {
     fn invalid_encoding_fails_verification() {
         assert!(matches!(
             verify("*&<>", &KEYS).unwrap_err(),
-            TokenVerificationError::Decoding(_)
+            VerifyError::Decoding(_)
         ));
     }
 
     #[test]
     fn too_short_fails_verification() {
-        assert_eq!(
-            verify("abcd", &KEYS).unwrap_err(),
-            TokenVerificationError::TooShort
-        );
+        assert_eq!(verify("abcd", &KEYS).unwrap_err(), VerifyError::TooShort);
     }
 }
