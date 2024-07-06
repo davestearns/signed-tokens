@@ -42,11 +42,11 @@ let signing_keys = vec![
 ]
 ```
 
-You can have up to 255 signing keys. Each key can be used for signing and verifying, verifying only, or marked as "do not use" (i.e., for placeholders).
+You can have up to 255 signing keys. Each key has a status, which defaults to `SigningKeyStatus::SignAndVerify`. This can be changed to `VerifyOnly` when you want to stop signing new tokens with the key, but allow existing tokens to be verified with it. You can also change it to `DoNotUse` if you don't want the key used at all anymore (i.e., it's just a placeholder to keep the indexes in the slice the same). 
 
-When you sign, this crate will randomly choose one of the sign-and-verify keys, and add the array index to the generated token so it knows which one it used. When you verify a token, pass the same array of keys so that this crate uses the correct key to verify the signature.
+When you sign a session ID, this crate will randomly choose one of the sign-and-verify keys, and add the slice index to the generated token so it knows which one it used. When you verify a token, pass the same slice of keys so that this crate uses the correct key to verify the signature.
 
-To sign your session ID, pass it and your array of signing keys to the `sign()` function:
+To sign your session ID, pass it and your slice of signing keys to the `sign()` function:
 
 ```rust
 let token = session_tokens::sign(&session_id, &signing_keys);
@@ -67,5 +67,15 @@ match session_tokens::verify(&token, &signing_keys) {
 The `verify()` function will return an error `Result` if any of the following occur:
 - The token has been tampered with--i.e., the session ID or signature has been changed since signing
 - The token contains a signing key index that is no longer in the provided array of signing keys
+- The token contains a signing key index that is now marked as `DoNotUse`
 - The token is not a valid base64 string
 - The token is too short to be a valid token
+
+## Rotating Keys Over Time
+
+It's a good idea to rotate your signing keys over time. Do so following this procedure:
+
+1. Change the `status` of the key you want to replace to `VerifyOnly`. This will allow existing tokens signed with that key to still verify correctly, but it will no longer be used to sign new tokens.
+1. After your normal session timeout period, replace that key with a new one, and set the status back to `SignAndVerify`.
+
+If you don't have a session timeout, you can add new keys to the end of the slice, and mark the older keys as `VerifyOnly`.
