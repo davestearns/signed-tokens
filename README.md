@@ -1,5 +1,7 @@
 # Signed Tokens
 
+[![CI](https://github.com/davestearns/signed-tokens/actions/workflows/ci.yml/badge.svg)](https://github.com/davestearns/signed-tokens/actions/workflows/ci.yml)
+
 A simple Rust crate for creating and verifying HMAC-signed tokens, with multiple rotating keys.
 
 The canonical use-case for this is authenticated session tokens. After a user successfully signs in, your system should:
