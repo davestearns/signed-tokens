@@ -59,7 +59,7 @@ When you respond to the client, include the base64-encoded string as a [secure H
 
 ```rust
 // Use the same set of signing keys as you did when signing
-let verified_token = signed_tokens::verify(&token_from_request_cookie, &signing_keys)?
+let verified_token = signed_tokens::verify(&token_from_request_cookie, &signing_keys)?;
 let session_id = verified_token.payload();
 
 // look up account info in your cache using `session_id`...
