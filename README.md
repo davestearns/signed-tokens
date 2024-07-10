@@ -14,17 +14,9 @@ During subsequent requests, use this crate to verify the signed token and retrie
 
 ## Usage
 
-First use `cargo` to add the crate as a dependency:
-
-```bash
-cargo add --git https://github.com/davestearns/signed-tokens
-```
-
-After the user successfully signs in, generate a random value for the session ID--a UUID works well for this:
+After the user successfully signs in, generate a random value for the session ID--a UUID works well for this, but you can use any unique value:
 
 ```rust
-// Remember to `cargo add uuid --features v4` 
-// if you want to use UUIDs for session IDs
 use uuid::Uuid;
 
 let session_id = Uuid::new_v4().to_string();
