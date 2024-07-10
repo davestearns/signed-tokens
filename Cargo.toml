@@ -1,7 +1,12 @@
 [package]
-name = "signed-tokens"
-version = "0.1.0"
+name = "signed_tokens"
+version = "0.2.0"
+authors = ["Dave Stearns"]
 edition = "2021"
+license = "MIT"
+description = "Creates and verifies digitally-signed tokens suitable for authenticated session IDs."
+repository = "https://github.com/davestearns/signed-tokens"
+keywords = ["sessions", "tokens", "signatures"]
 
 [dependencies]
 base64 = "0.22.1"
