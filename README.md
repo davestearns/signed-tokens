@@ -49,8 +49,8 @@ When you sign a session ID, this crate will randomly choose one of the sign-and-
 To sign your session ID, pass it and your slice of signing keys to the `sign()` function:
 
 ```rust
-let token = signed_tokens::sign(&session_id, &signing_keys);
-let base64_token = token.to_string();
+let token = signed_tokens::sign(&session_id, &signing_keys)?;
+let url_safe_base64_token = token.to_string();
 ```
 
 The `sign()` method returns a `SignedToken` struct, which wraps a binary buffer containing the chosen signing key index, the payload (your session ID in this case) and an HMAC signature. This can be turned into a base64-encoded String using the `to_string()` method.
@@ -59,10 +59,10 @@ When you respond to the client, include the base64-encoded string as a [secure H
 
 ```rust
 // Use the same set of signing keys as you did when signing
-match signed_tokens::verify(&token_from_request_cookie, &signing_keys) {
-    Err(err) => // ... handle error,
-    Ok(verified_token) => // ... get session_id using verified_token.payload()
-}
+let verified_token = signed_tokens::verify(&token_from_request_cookie, &signing_keys)?
+let session_id = verified_token.payload();
+
+// look up account info in your cache using `session_id`...
 ```
 
 The `VerifiedToken` returned from `verify()` contains not only the payload you passed when signing the token, but also the `SigningKeyStatus` of the key used to verify the token. This is useful for rotating keys over time (see next section for more details).
