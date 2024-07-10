@@ -1,3 +1,41 @@
+//! A simple Rust crate for creating and verifying HMAC-signed tokens, with multiple rotating keys.
+//!
+//! The canonical use-case for this is authenticated session tokens.
+//! After a user successfully signs in, your system should:
+//! 1. Generate a random session ID, perhaps using the [uuid crate](https://crates.io/crates/uuid)
+//! 1. Put the account information into a cache (e.g., Redis) using the session ID as the key
+//! 1. Use the [sign] function to create a digitally-signed token containing the
+//! session ID and the HMAC digital signature
+//! 1. Include the signed token as a
+//! [secure, HTTP-only cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Cookies#block_access_to_your_cookies)
+//!
+//! For example:
+//! ```
+//! use signed_tokens::SigningKey;
+//!
+//! // get your signing keys from env vars, or a secrets service
+//! let signing_keys = vec![
+//!     SigningKey::new(env::var("SESSION_SIGNING_KEY_1").unwrap()),
+//!     SigningKey::new(env::var("SESSION_SIGNING_KEY_2").unwrap()),
+//!     SigningKey::new(env::var("SESSION_SIGNING_KEY_3").unwrap()),
+//! ];
+//!
+//! // generate a new session ID
+//! let session_id = "... some unique session id ... ";
+//!
+//! // sign it to create a token
+//! let token = signed_tokens::sign(&session_id, &signing_keys);
+//! let url_safe_base64_token = token.to_string();
+//!
+//! // set a Secure HttpOnly response cookie...
+//! ```
+//!
+//! When you receive the token in a subsequent request, use the [verify] function to verify it.
+//! ```
+//! let verified_token = signed_tokens::verify(&token_from_request_cookie, &signing_keys)?;
+//! let session_id = verified_token.payload();
+//! // fetch account info from your cache...
+//! ```
 use std::fmt::Display;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, DecodeError, Engine as _};
@@ -13,23 +51,32 @@ type HmacSha256 = Hmac<Sha256>;
 /// Potential errors returned from the [sign] function.
 #[derive(Debug, Error, PartialEq, Clone)]
 pub enum SignError {
+    /// Returned when the signing keys slice has more than 255 entries.
     #[error("signing keys may only have 255 entries")]
     TooManyKeys,
-    #[error("empty payload")]
-    EmptyPayload,
+    /// Returned when none of the signing keys have a status of
+    /// [SigningKeyStatus::SignAndVerify]
     #[error("no active keys found in the signing keys slice")]
     NoActiveSigningKeys,
+    /// Returned when the payload to be signed has zero length.
+    #[error("empty payload")]
+    EmptyPayload,
 }
 
 /// Potential errors returned from the [verify] function.
 #[derive(Debug, Error, PartialEq, Clone)]
 pub enum VerifyError {
+    /// Returned when the base64-decoding fails.
     #[error("error decoding token: {0}")]
     Decoding(#[from] DecodeError),
+    /// Returned when the HMAC signature verification fails.
     #[error("error verifying signature: {0}")]
     Signature(#[from] MacError),
+    /// Returned when the provided token is too short to be a valid token.
     #[error("the provided token is too short")]
     TooShort,
+    /// Returned when the key index saved in the signed token no
+    /// longer matches an entry in the signing keys slice.
     #[error("the key index saved in the token does not match an entry in the signing keys array")]
     NoMatchingKey,
 }
@@ -53,10 +100,12 @@ pub struct SigningKey {
 }
 
 impl SigningKey {
+    /// Creates a new [SigningKey] with a status of [SigningKeyStatus::SignAndVerify].
     pub fn new(key: impl AsRef<[u8]>) -> Self {
         Self::new_with_status(key, SigningKeyStatus::SignAndVerify)
     }
 
+    /// Creates a new [SigningKey] with the specified [SigningKeyStatus].
     pub fn new_with_status(key: impl AsRef<[u8]>, status: SigningKeyStatus) -> Self {
         Self {
             key: key.as_ref().to_vec(),
@@ -64,6 +113,7 @@ impl SigningKey {
         }
     }
 
+    /// Returns a reference to the key's bytes.
     pub fn key(&self) -> &[u8] {
         &self.key
     }
@@ -317,6 +367,9 @@ mod tests {
         let refreshed_token = sign(verified_token.payload(), &keys).unwrap().to_string();
         let reverified_token = verify(&refreshed_token, &keys).unwrap();
         assert_eq!(reverified_token.payload(), PAYLOAD);
-        assert_eq!(reverified_token.key_status(), &SigningKeyStatus::SignAndVerify);
+        assert_eq!(
+            reverified_token.key_status(),
+            &SigningKeyStatus::SignAndVerify
+        );
     }
 }

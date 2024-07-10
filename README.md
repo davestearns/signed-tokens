@@ -33,13 +33,13 @@ let session_id = Uuid::new_v4().to_string();
 To digitally sign the session ID, you'll also need some secret keys. Your server is the only one that needs to know about these keys, but they should remain the same after a server restart so that existing sessions will still be valid. You can read them from environment variables, or a file, or a secrets manager service, or whatever. But they should remain secret to your server and never be added directly to your source code.
 
 ```rust
-use session_tokens::SigningKey;
+use signed_tokens::SigningKey;
 
 let signing_keys = vec![
     SigningKey::new(env::var("SESSION_SIGNING_KEY_1").unwrap()),
     SigningKey::new(env::var("SESSION_SIGNING_KEY_2").unwrap()),
     SigningKey::new(env::var("SESSION_SIGNING_KEY_3").unwrap()),
-]
+];
 ```
 
 You can have up to 255 signing keys. Each key has a `status`, which defaults to `SigningKeyStatus::SignAndVerify`. This can be changed to `VerifyOnly` when you want to stop signing new tokens with the key, but allow existing tokens to be verified with it.
@@ -49,7 +49,7 @@ When you sign a session ID, this crate will randomly choose one of the sign-and-
 To sign your session ID, pass it and your slice of signing keys to the `sign()` function:
 
 ```rust
-let token = session_tokens::sign(&session_id, &signing_keys);
+let token = signed_tokens::sign(&session_id, &signing_keys);
 let base64_token = token.to_string();
 ```
 
@@ -59,7 +59,7 @@ When you respond to the client, include the base64-encoded string as a [secure H
 
 ```rust
 // Use the same set of signing keys as you did when signing
-match session_tokens::verify(&token_from_request_cookie, &signing_keys) {
+match signed_tokens::verify(&token_from_request_cookie, &signing_keys) {
     Err(err) => // ... handle error,
     Ok(verified_token) => // ... get session_id using verified_token.payload()
 }
