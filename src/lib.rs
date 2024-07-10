@@ -34,12 +34,18 @@ pub enum VerifyError {
     NoMatchingKey,
 }
 
+/// Indicates the status of a [SigningKey].
 #[derive(Debug, Clone, PartialEq)]
 pub enum SigningKeyStatus {
+    /// The key may be used to both sign new tokens, and verify existing tokens.
     SignAndVerify,
+    /// The key may be used only to verify existing tokens. New tokens will never
+    /// be signed using a key with this status. This allows you to deprecate a key
+    /// you intend to replace.
     VerifyOnly,
 }
 
+/// Represents a key that can be used when building an HMAC digital signature.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SigningKey {
     key: Vec<u8>,
@@ -63,15 +69,17 @@ impl SigningKey {
     }
 }
 
-/// Represents a signed token. Use the [Self::to_base64] or [Self::to_string] methods to encode
-/// the token as a base64 string.
+/// Represents a signed token. Use the [to_string](ToString::to_string)
+/// method to encode the token as a URL-safe base64 string.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SignedToken {
     buf: Vec<u8>,
+    #[cfg(test)]
     key_index: usize,
 }
 
 impl SignedToken {
+    /// Encodes the signed token as a URL-safe base64 String
     pub fn to_base64(&self) -> String {
         URL_SAFE_NO_PAD.encode(&self.buf)
     }
@@ -83,9 +91,7 @@ impl Display for SignedToken {
     }
 }
 
-/// Represents a verified token. The payload is available via the [Self::payload] method,
-/// and the status of the key used to verify the token is available via the [Self::key_status]
-/// method.
+/// Represents a verified token.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VerifiedToken {
     payload: Vec<u8>,
@@ -93,18 +99,27 @@ pub struct VerifiedToken {
 }
 
 impl VerifiedToken {
+    /// Returns the payload from the token. This is guaranteed
+    /// to be the same as the payload that was used when signing
+    /// the token. If the payload was tampered with, the token
+    /// verification will return a [VerifyError] instead.
     pub fn payload(&self) -> &[u8] {
         &self.payload
     }
 
+    /// Returns the [SigningKeyStatus] of the key used to verify
+    /// the token. This is useful when rotating signing keys.
+    /// If this matches [SigningKeyStatus::VerifyOnly], you should
+    /// sign a new token with the same payload to get a refreshed
+    /// token that is signed using one of the remaining active keys.
+    /// You can then replace the verify-only key with a new one after
+    /// the outstanding tokens have been refreshed.
     pub fn key_status(&self) -> &SigningKeyStatus {
         &self.key_status
     }
 }
 
-/// Signs the given payload using a randomly selected key from the signing_keys.
-/// The returned String is base64 encoded using a URL-safe alphabet, so you can
-/// include it in your HTTP response as a secure HttpOnly cookie.
+/// Signs the given payload using a randomly selected active key from the signing_keys.
 pub fn sign(
     payload: impl AsRef<[u8]>,
     signing_keys: &[SigningKey],
@@ -141,7 +156,11 @@ pub fn sign(
     token_bytes.extend(&signature);
     token_bytes.extend(payload_bytes);
 
-    Ok(SignedToken { buf: token_bytes, key_index })
+    Ok(SignedToken {
+        buf: token_bytes,
+        #[cfg(test)]
+        key_index,
+    })
 }
 
 /// Verifies a previously signed token. The key used to sign the token must still
@@ -271,6 +290,8 @@ mod tests {
             SigningKey::new_with_status("deprecated key 1", SigningKeyStatus::VerifyOnly),
             SigningKey::new_with_status("deprecated key 2", SigningKeyStatus::VerifyOnly),
             SigningKey::new("active key"),
+            SigningKey::new_with_status("deprecated key 3", SigningKeyStatus::VerifyOnly),
+            SigningKey::new_with_status("deprecated key 4", SigningKeyStatus::VerifyOnly),
         ];
         let token = sign(PAYLOAD, &keys).unwrap();
         assert_eq!(token.key_index, 2);
@@ -284,7 +305,18 @@ mod tests {
     fn verify_works_with_deprecated_key() {
         let mut keys = vec![SigningKey::new("test key")];
         let token = sign(PAYLOAD, &keys).unwrap().to_string();
+
         keys[0].status = SigningKeyStatus::VerifyOnly;
-        assert!(verify(&token, &keys).is_ok());
+        let verified_token = verify(&token, &keys).unwrap();
+
+        assert_eq!(verified_token.payload(), PAYLOAD);
+        assert_eq!(verified_token.key_status(), &SigningKeyStatus::VerifyOnly);
+
+        keys[0] = SigningKey::new("rotated key");
+
+        let refreshed_token = sign(verified_token.payload(), &keys).unwrap().to_string();
+        let reverified_token = verify(&refreshed_token, &keys).unwrap();
+        assert_eq!(reverified_token.payload(), PAYLOAD);
+        assert_eq!(reverified_token.key_status(), &SigningKeyStatus::SignAndVerify);
     }
 }
