@@ -11,8 +11,15 @@
 //!
 //! For example:
 //! ```
+//! use std::env;
 //! use signed_tokens::SigningKey;
 //!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # // this is just to make the doc tests pass
+//! # env::set_var("SESSION_SIGNING_KEY_1", "SESSION_SIGNING_KEY_1");
+//! # env::set_var("SESSION_SIGNING_KEY_2", "SESSION_SIGNING_KEY_2");
+//! # env::set_var("SESSION_SIGNING_KEY_3", "SESSION_SIGNING_KEY_3");
+//! 
 //! // get your signing keys from env vars, or a secrets service
 //! let signing_keys = vec![
 //!     SigningKey::new(env::var("SESSION_SIGNING_KEY_1").unwrap()),
@@ -24,17 +31,30 @@
 //! let session_id = "... some unique session id ... ";
 //!
 //! // sign it to create a token
-//! let token = signed_tokens::sign(&session_id, &signing_keys);
-//! let url_safe_base64_token = token.to_string();
+//! let token = signed_tokens::sign(&session_id, &signing_keys)?;
 //!
-//! // set a Secure HttpOnly response cookie...
+//! // set a Secure HttpOnly response cookie 
+//! // to the value of token.to_string()...
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! When you receive the token in a subsequent request, use the [verify] function to verify it.
 //! ```
+//! # use signed_tokens::SigningKey;
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # let signing_keys = vec![SigningKey::new("test key")];
+//! # let token = signed_tokens::sign(b"my session ID", &signing_keys)?;
+//! # let token_from_request_cookie = token.to_string();
+//! 
+//! // read `token_from_request_cookie` from the request cookies,
+//! // and use the same `signing_keys` from above
 //! let verified_token = signed_tokens::verify(&token_from_request_cookie, &signing_keys)?;
 //! let session_id = verified_token.payload();
-//! // fetch account info from your cache...
+//! 
+//! // fetch account info from your cache using session_id...
+//! # Ok(())
+//! # }
 //! ```
 use std::fmt::Display;
 
