@@ -1,6 +1,8 @@
 # Signed Tokens
 
 [![CI](https://github.com/davestearns/signed-tokens/actions/workflows/ci.yml/badge.svg)](https://github.com/davestearns/signed-tokens/actions/workflows/ci.yml)
+[![Crates.io Version](https://img.shields.io/crates/v/signed_tokens)](https://crates.io/crates/signed_tokens)
+[![Documentation](https://docs.rs/signed_tokens/badge.svg)](https://docs.rs/signed_tokens)
 
 A simple Rust crate for creating and verifying HMAC-signed tokens, with multiple rotating keys.
 
